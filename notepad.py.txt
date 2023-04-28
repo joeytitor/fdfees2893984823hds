@@ -1,0 +1,114 @@
+import ESMF
+import numpy
+import os
+
+import ESMF.util.helpers as helpers
+import ESMF.api.constants as constants
+
+from io import StringIO
+
+import sys
+numpy.set_printoptions(threshold=sys.maxsize)
+# This call enables debug logging when debug=True
+mg = ESMF.Manager(debug=False)
+
+#need 6 for all tiles to be represented
+if ESMF.pet_count() != 6:
+    print ("ESMPy cubed sphere regridding example requires 6 processors")
+    import sys; sys.exit(0)
+
+# create an regular lat lon grid from file
+
+DATADIR = os.path.join(os.getcwd(), 'hdf5file/')
+dstgrid = ESMF.Grid(filename=os.path.join(DATADIR, "MATLABEDIT.nc"),         # Create a  global grid from a GRIDSPEC formatted file
+                 filetype=ESMF.FileFormat.GRIDSPEC)
+
+# Create a cubed sphere grid with x elements per tile
+srcgrid = ESMF.Grid(tilesize=5, name="cubed_sphere")
+
+# create a field on the center stagger locations of the source grid
+srcfield = ESMF.Field(srcgrid, name='srcfield', staggerloc=ESMF.StaggerLoc.CENTER)
+srcfracfield = ESMF.Field(srcgrid, name='srcfracfield', staggerloc=ESMF.StaggerLoc.CENTER)
+
+print(srcfield)
+srcString=StringIO()
+print(srcfield, file=srcString)
+result=srcString.getvalue()
+
+f = open("srcfieldprint.txt", "w")
+f.write(result)
+f.close
+
+
+
+# create a field on the center stagger locations of the destination grid
+dstfield = ESMF.Field(dstgrid, name='dstfield', staggerloc=ESMF.StaggerLoc.CENTER)
+xctfield = ESMF.Field(dstgrid, name='xctfield', staggerloc=ESMF.StaggerLoc.CENTER)
+dstfracfield = ESMF.Field(dstgrid, name='dstfracfield', staggerloc=ESMF.StaggerLoc.CENTER)
+
+print(dstfield)
+dstfString=StringIO()
+print(dstfield, file=dstfString)
+result=dstfString.getvalue()
+
+f = open("dstffieldprint.txt", "w")
+f.write(result)
+f.close
+
+
+
+
+# initialize the fields
+[lon,lat] = [0, 1]
+
+deg2rad = 0.314/180.
+
+gridLon = srcfield.grid.get_coords(lon, ESMF.StaggerLoc.CENTER)
+gridLat = srcfield.grid.get_coords(lat, ESMF.StaggerLoc.CENTER)
+
+x = numpy.cos(numpy.radians(gridLon))*numpy.sin(numpy.radians(90-gridLat))
+y = numpy.sin(numpy.radians(gridLon))*numpy.sin(numpy.radians(90-gridLat))
+z = numpy.cos(numpy.radians(90-gridLat))
+
+srcfield.data[...] = 200.0 + x + y + z
+
+gridLon = xctfield.grid.get_coords(lon, ESMF.StaggerLoc.CENTER)
+gridLat = xctfield.grid.get_coords(lat, ESMF.StaggerLoc.CENTER)
+
+x = numpy.cos(numpy.radians(gridLon))*numpy.sin(numpy.radians(90-gridLat))
+y = numpy.sin(numpy.radians(gridLon))*numpy.sin(numpy.radians(90-gridLat))
+z = numpy.cos(numpy.radians(90-gridLat))
+
+xctfield.data[...] = 200.0 + x + y + z
+
+dstfield.data[...] = 1e20
+
+# write regridding weights to file, check
+import os
+filename = "esmpy_example_weight_file_cs.nc"
+if ESMF.local_pet() == 0:
+    if os.path.isfile(os.path.join(os.getcwd(), filename)):
+        os.remove(os.path.join(os.getcwd(), filename))
+
+mg.barrier()
+
+regrid = ESMF.Regrid(srcfield, dstfield, filename=filename,
+                     regrid_method=ESMF.RegridMethod.BILINEAR,
+                     unmapped_action=ESMF.UnmappedAction.ERROR)
+
+mg.barrier()
+regrid = ESMF.RegridFromFile(srcfield, dstfield, filename=filename)
+
+#Regridding from source to destination field
+mg.barrier()
+dstfield = regrid(srcfield, dstfield)
+
+###################################
+dstString=StringIO()
+print(dstfield, file=dstString)
+result=dstString.getvalue()
+
+f = open("dstfieldprint.txt", "w")
+f.write(result)
+f.close
+###################################
